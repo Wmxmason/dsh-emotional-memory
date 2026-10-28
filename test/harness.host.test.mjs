@@ -299,7 +299,8 @@ test('full daily pipeline commits memory before context replacement and defers a
       const input = JSON.parse(options.messages[0].content[0].text);
       const source = input.observations.find((item) => item.role === 'user');
       const response = { ops: source ? [{ op: 'add', content: '用户希望保留重要约定', kind: 'core',
-        emotion: 0, importance: 1, confidence: 1, sourceIds: [source.id] }] : [], handoff: '下一次继续完善报告。' };
+        emotion: 0, importance: 1, confidence: 1, topic: '重要约定',
+        keywords: [{ text: '约定', sourceIds: [source.id] }], sourceIds: [source.id] }] : [], handoff: '下一次继续完善报告。' };
       yield { type: 'text-delta', index: 0, text: JSON.stringify(response) };
       yield { type: 'finish', reason: { kind: 'stop' } };
     } },

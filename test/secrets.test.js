@@ -21,7 +21,7 @@ test('known credential patterns are refused in either automatic or explicit memo
   for (const content of SYNTHETIC) {
     assert.ok(containsKnownSecret(content));
     const raw = JSON.stringify({ ops: [{ op: 'add', content, kind: 'core', emotion: 0, importance: 1,
-      confidence: 1, sourceIds: ['1:0'] }], handoff: '' });
+      confidence: 1, topic: '合成主题', keywords: [{ text: '合成关键词', sourceIds: ['1:0'] }], sourceIds: ['1:0'] }], handoff: '' });
     assert.throws(() => parseDistillation(raw, batch, { records: [] }), /refused/);
     const parsed = parseDistillation(JSON.stringify({ ops: [], handoff: content }), batch, { records: [] });
     assert.equal(parsed.handoff.includes(content), false);

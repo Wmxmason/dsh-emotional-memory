@@ -60,7 +60,8 @@ async function setup(t) {
       const input = JSON.parse(options.messages[0].content[0].text);
       const source = input.observations.find((item) => item.role === 'user');
       yield { type: 'text-delta', index: 0, text: rawResponse ?? JSON.stringify({ ops: source ? [{ op: 'add', content: '用户叫小林',
-        kind: 'core', confidence: 1, importance: 1, emotion: 0.5, sourceIds: [source.id] }] : [], handoff: '明天继续画画' }) };
+        kind: 'core', confidence: 1, importance: 1, emotion: 0.5, topic: '用户称呼',
+        keywords: [{ text: '小林', sourceIds: [source.id] }], sourceIds: [source.id] }] : [], handoff: '明天继续画画' }) };
       yield { type: 'finish', reason: { kind: finishKind } };
     } },
   };
@@ -155,10 +156,71 @@ hostTest('memory tools report the values actually stored, including emotion, imp
   assert.equal(saved.importance, record.importance);
   assert.equal(saved.reinforcementCount, record.reinforcementCount);
   assert.equal(saved.createdAt, record.createdAt);
+  assert.equal(saved.level, 5);
+  assert.equal(saved.levelHits, 0);
+  assert.equal(saved.mentionCount, 1);
+  assert.equal(saved.topic, '测试情绪经历');
+  assert.deepEqual(saved.keywords, ['测试情绪经历']);
+  assert.equal(saved.expiresAt, saved.lastMentionedAt + 365 * 86400000);
   const searched = JSON.parse((await s.definitions.get('memory_search').execute({ query: '测试情绪' }, exec)).text);
   assert.equal(searched[0].emotion, 0.8);
   assert.equal(searched[0].importance, 0.7);
   assert.equal(searched[0].reinforcementCount, 0);
+  assert.equal(searched[0].level, 5);
+  const status = JSON.parse((await s.definitions.get('memory_status').execute({}, exec)).text);
+  assert.equal(status.memoryModeVersion, 2);
+  assert.equal(status.levels[5], 1);
+  assert.equal(status.migrationRemaining, 0);
+  assert.equal(status.nextKeywordCleanupAt, status.modeActivatedAt + 30 * 86400000);
+});
+
+hostTest('explicit retention requests round up and repeated manual saves do not invent extra mentions', async (t) => {
+  const s = await setup(t);
+  const session = s.old.agent.session;
+  session.append('user/message', createUserMessage({ source: { kind: 'user' },
+    content: [{ type: 'text', text: '这次设备维修的事情请记住2天。' }] }), { surfaceOp: 'append' });
+  const exec = { agent: s.old.agent };
+  const args = { content: '设备维修经历', kind: 'routine', topic: '这次设备维修', keywords: ['维修'], retentionDays: 2 };
+  const save = async () => JSON.parse((await s.definitions.get('memory_save').execute(args, exec)).text);
+  const first = await save();
+  const repeated = await save();
+  assert.equal(first.level, 2);
+  assert.equal(first.expiresAt, first.lastMentionedAt + 3 * 86400000);
+  assert.equal(repeated.id, first.id);
+  assert.equal(repeated.mentionCount, 1);
+  assert.equal(repeated.expiresAt, first.expiresAt);
+  const state = await s.store.load(s.scope);
+  assert.equal(state.records.length, 1);
+  assert.equal(state.records[0].keywords[0].mentionCount, 1);
+});
+
+hostTest('manual saves return the specific fact for each topic when contents are identical', async (t) => {
+  const s = await setup(t);
+  const session = s.old.agent.session;
+  const exec = { agent: s.old.agent };
+  const saved = [];
+  for (const topic of ['家用设备', '公司设备']) {
+    session.append('user/message', createUserMessage({ source: { kind: 'user' },
+      content: [{ type: 'text', text: `${topic}维修结束，请记住。` }] }), { surfaceOp: 'append' });
+    saved.push(JSON.parse((await s.definitions.get('memory_save').execute({
+      content: '设备维修结束', kind: 'routine', topic, keywords: ['维修'],
+    }, exec)).text));
+  }
+  assert.notEqual(saved[0].id, saved[1].id);
+  assert.deepEqual(saved.map((record) => record.topic), ['家用设备', '公司设备']);
+  assert.equal((await s.store.load(s.scope)).records.length, 2);
+});
+
+hostTest('status reports keyword cleanup dates anchored to mode activation after a session merge', async (t) => {
+  const s = await setup(t);
+  const day = 86400000;
+  const activation = Date.now() - 61 * day;
+  await s.store.update(s.scope, (state) => {
+    state.modeActivatedAt = activation;
+    state.lastKeywordCleanupAt = activation + 40 * day;
+  });
+  const status = JSON.parse((await s.definitions.get('memory_status').execute({}, { agent: s.old.agent })).text);
+  assert.equal(status.nextKeywordCleanupAt, activation + 60 * day);
 });
 
 hostTest('status distinguishes agent-busy deferral from timeout retry without exposing provider errors', async (t) => {

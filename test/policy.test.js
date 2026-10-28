@@ -31,6 +31,18 @@ test('ordinary memories decay naturally and archived records are zero', () => {
   assert.equal(strength(record({ status: 'archived' }), now), 0);
 });
 
+test('lifecycle records stay fully strong until expiry, while level six ignores dirty expiry data', () => {
+  const active = record({ level: 3, expiresAt: now + DAY });
+  assert.equal(strength(active, now), 1);
+  assert.equal(strength(active, now + DAY), 0);
+  assert.equal(shouldArchive(active, now + DAY), true);
+  const permanent = record({ level: 6, expiresAt: now - DAY });
+  assert.equal(strength(permanent, now), 1);
+  assert.equal(shouldArchive(permanent, now), false);
+  assert.equal(strength({ ...permanent, status: 'archived' }, now), 0);
+  assert.equal(shouldArchive({ ...permanent, status: 'archived' }, now), true);
+});
+
 test('selection recognizes Chinese bigrams and English words without recalling unrelated emotion', () => {
   const records = [
     record({ content: '我喜欢在公园散步', emotion: 0 }),

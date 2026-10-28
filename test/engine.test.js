@@ -19,7 +19,9 @@ function response(input, kind = 'routine') {
   const payload = JSON.parse(input);
   const first = payload.observations.find((item) => item.role === 'user');
   return JSON.stringify({ ops: first ? [{ op: 'add', content: first.text.slice(0, 500), kind,
-    emotion: kind === 'emotional' ? 1 : 0, importance: 0.5, confidence: 1, sourceIds: [first.id] }] : [], handoff: '' });
+    emotion: kind === 'emotional' ? 1 : 0, importance: 0.5, confidence: 1,
+    topic: first.text.slice(0, 40), keywords: [{ text: first.text.slice(0, 40), sourceIds: [first.id] }],
+    sourceIds: [first.id] }] : [], handoff: '' });
 }
 
 test('long conversations are processed in complete bounded batches without dropping their beginning', async (t) => {
@@ -145,7 +147,7 @@ test('recall and empty daily整理 do not strengthen a memory or refresh its age
   let now = START;
   const engine = new MemoryEngine(store, {}, () => now);
   await engine.capture(session(['我很喜欢公园散步']));
-  const result = await engine.consolidate('qq-alice', async (input) => response(input), { force: true });
+  const result = await engine.consolidate('qq-alice', async (input) => response(input, 'core'), { force: true });
   await engine.finish('qq-alice', result.date);
   const record = structuredClone((await store.load('qq-alice')).records[0]);
   for (let i = 0; i < 10; i++) engine.context('qq-alice', '公园');
@@ -252,7 +254,7 @@ test('a concurrent explicit forget invalidates an older model proposal instead o
   const engine = new MemoryEngine(store, {}, () => START);
   await engine.capture(session(['first fact', 'a later independent message']));
   await store.update('qq-alice', (s) => {
-    s.records.push({ id: 'old', content: 'old fact', sourceIds: ['0:0'] });
+    s.records.push({ id: 'old', content: 'old fact', sourceIds: ['0:0'], level: 6, kind: 'core', status: 'active' });
     s.handoff = 'old fact';
   });
   await assert.rejects(engine.consolidate('qq-alice', async () => {

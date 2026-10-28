@@ -1,6 +1,6 @@
 # DeepSeek Harness 情绪记忆插件
 
-只处理 QQ 机器人会话：聊天时保存文字观察，每天北京时间 04:00 整理长期记忆，根据情绪强度、记忆类型和真实再次提及进行衰减，然后创建一个空白原生会话，把 QQ 对话切过去。新会话使用同一份长期记忆、交接摘要和原来的人设配置。
+只处理 QQ 机器人会话：聊天时保存文字观察，每天北京时间 04:00 整理长期记忆，根据情绪强度、真实再次提及和明确保留请求管理六级记忆期限，然后创建一个空白原生会话，把 QQ 对话切过去。新会话使用同一份长期记忆、交接摘要和原来的人设配置。
 
 ## 已验证的环境
 
@@ -16,13 +16,13 @@
 从 [GitHub Releases](https://github.com/Wmxmason/dsh-emotional-memory/releases/latest) 下载安装包。使用者需要先配置自己的模型 API 和 QQ 机器人；本插件不附带个人记忆、人设或凭据。
 
 ```powershell
-dsh plugin --profile desktop add 'C:\path\to\dsh-emotional-memory-0.2.3.tgz'
+dsh plugin --profile desktop add 'C:\path\to\dsh-emotional-memory-0.3.0.tgz'
 ```
 
 若 `dsh` 不在 PATH，本机 Windows Desktop 的命令位于：
 
 ```powershell
-& "$env:LOCALAPPDATA\Programs\DeepSeek Harness\resources\runtime\cli\bin\dsh.cmd" plugin --profile desktop add 'C:\path\to\dsh-emotional-memory-0.2.3.tgz'
+& "$env:LOCALAPPDATA\Programs\DeepSeek Harness\resources\runtime\cli\bin\dsh.cmd" plugin --profile desktop add 'C:\path\to\dsh-emotional-memory-0.3.0.tgz'
 ```
 
 升级后完整退出并重新打开 Harness，再从 QQ 发一条普通消息，让适配器登记对应的 QQ 对话。安装命令会把声明了 bundle patch 的包加入 `dsh.profile.bundles`，由宿主读取包内的 `cordis.patch.yml`；已有配置覆盖继续生效。卸载使用同一入口的 `plugin --profile desktop remove dsh-emotional-memory`，数据文件由用户保留。
@@ -39,11 +39,13 @@ dsh plugin --profile desktop add 'C:\path\to\dsh-emotional-memory-0.2.3.tgz'
 
 日常捕获和北京时间每日整理不依赖机器人主动调用工具；明确保存和维护工具用于即时需求。手动操作始终限于调用工具的当前会话。
 
-`memory_save` 返回实际保存记录的 JSON，包括 id、内容、类型、情绪强度、重要度、可信度、强化次数与时间；`memory_search` 返回同样的字段。确认保存参数时直接核对工具结果。
+`memory_save` 返回实际保存记录的 JSON，包括 id、内容、类型、情绪强度、重要度、可信度、历史强化次数与时间；`memory_search` 返回同样字段。六级模式还会输出 `topic`、`keywords`、`level`、`levelHits`、`mentionCount`、`lastMentionedAt`、`expiresAt`。确认保存参数时直接核对工具结果。
 
 ## 查看整理进度
 
 `memory_status` 返回 `processingDate` 和 `maintenance`。其中 `remaining` 是当前待整理观察数量，`batches`、`processed` 是本次维护尝试已提交的批次和观察数量，`lastProgressAt` 是最近成功提交的时间，`running` 表示当前宿主是否持有该范围的维护任务。
+
+六级模式还返回 `memoryModeVersion`、`migrationRemaining`、各级活跃记录数 `levels`、`modeActivatedAt`、`lastKeywordCleanupAt` 与 `nextKeywordCleanupAt`。这些时间均为 Unix 毫秒时间戳；`migrationRemaining` 为仍待重分类的活跃旧记录数。
 
 状态包括 `queued`（已请求）、`running`（执行中）、`partial`（本次批次用完，稍后继续）、`deferred`（暂不能进入维护）、`retry-pending`（失败后等待重试）、`context-pending`（整理已保存，等待活动会话应用）、`complete`（本轮完成）。重启后保留的运行快照不直接视为仍在执行，工具会显示等待恢复。
 
@@ -76,17 +78,21 @@ dsh plugin --profile desktop add 'C:\path\to\dsh-emotional-memory-0.2.3.tgz'
 
 QQ 插件没有公开会话切换服务，本版适配其 0.5.2 私有接口，并在其他版本拒绝安装适配器、记录警告。升级 QQ 插件后需要重新验证适配。适配器只在进程内包装生命周期方法，不修改 QQ 插件安装文件。
 
-| 类型 | 基础半衰期 / 规则 |
-| --- | --- |
-| ephemeral：一次性、临时细节 | 1 天 |
-| routine：普通日常 | 7 天 |
-| emotional：重要情绪经历 | 30 天 |
-| core：稳定称呼、偏好、约定 | 保留到更新或删除 |
-| commitment：未完成承诺 | 保留到完成、撤回或明确删除 |
+### 六级记忆模式
 
-普通记录的半衰期会乘上 `(1 + 2 × 情绪强度) × (1 + 0.25 × min(有效强化次数, 4))`。活跃度按 `2^(-时间/半衰期)` 计算；默认低于 0.05 后退出召回并归档，归档再保留 7 天后从插件文件清理。以上是可调的工程策略，不是对人类记忆规律的精确复现。
+`v0.3.0` 起启用六级模式。旧版本升级后在首次维护时分批迁移活跃记忆，迁移使用宿主配置的模型并产生相应 API 用量。
 
-自动检索、每日扫描、读取已有记忆都不算强化。新增或强化必须引用本批用户原话的来源 id；assistant、工具结果和本插件交接不作为用户事实证据。同一天多次确认最多增加一次强化计数。
+普通事件的等级期限为 L1 1 天、L2 3 天、L3 7 天、L4 30 天、L5 365 天、L6 永久。首个北京时间 04:00 业务日内，独立用户消息 1–2 条为 L1、至少 3 条为 L2；之后每一级分别累计 1、3、5、7、10 次真实命中才升到下一等级。每个 `topic + actor` 每个业务日最多升级一级，升级后本级计数清零；未达门槛的真实用户来源时间仍刷新过期时间。情绪记录初始按情绪强度 `<.2`、`.2–.4`、`.4–.6`、`.6–.8`、`>=.8` 分别进入 L1–L5，之后真实命中可升至 L6。`core`、`pinned`、`commitment` 与 L6 均受永久保护。
+
+明确的用户保留请求采用保守模板识别；普通叙述（例如“出差三天”）不是保留请求。请求的期限向上取至不短于该期限的等级：例如 2 天使用 3 天级别，半个月使用 30 天级别，超过 365 天为永久。期限不保证召回；注入仍受预算和当前问题相关性限制。已过期的事实被用户再次提及时，会从适用的初级状态重新开始，不继承旧的命中进度。
+
+主题和关键词仅用于候选查找；模型必须按语义判断是否为同一具体事实或纠正，且不同群/用户 actor 必须分开。完整 `content` 保留。每个独立用户事件对每个主题至多记一次：消息分块、fork、重试、assistant、检索和扫描都不计。新关键词须带各自真实的 `sourceIds`，不能因刷新而照抄旧标签来源。
+
+缺少 actor 的旧群聊记忆保留未知归属，具名群成员的发言只能形成自己的新事实，不能据此修改、强化或归档该旧记录；明确按 id 遗忘仍可在当前群的记忆范围内执行。私聊中没有 actor 标记的来源继续兼容。
+
+每个 scope 从首次启用的 `modeActivatedAt` 开始固定每 30 天清理一次关键词窗口 `[T-40 天, T-10 天)`；最新 10 天的标签处于观察保护期，最近由真实用户重新提及的标签保留。`core`、`commitment`、`pinned`、L6 全部排除。清理只删关键词索引，不删完整内容或原始日志，不按运行次数计算；离线或失败后会在恢复时补做。
+
+旧 active 记忆首次维护时逐条重分类，且不改写 `content`、`createdAt`、`sourceIds` 或原有 protected kind。保留旧 `reinforcementCount` 以兼容展示，但不把它映射为新命中；新 `levelHits` 和 `mentionCount` 从 0 开始。每条成功迁移的记录从迁移时刻开始自己的新 TTL，关键词同时开始观察期；模式清理锚点与单条 TTL 锚点独立。迁移按批次成功持久化，失败保留恢复状态，不会复活 archive。旧半衰期及 `archiveThreshold` 仅作为尚未迁移数据的兼容回退，不适用于新模式。
 
 情绪强度影响保留时长；召回先按当前问题相关性筛选。最多 3 条核心或未完成事项可常驻，其余需中文双字或英文词命中，每次注入总长度受 `injectMaxChars` 限制。普通会话交接在 14 天没有新对话后过期；已经单独保存的未完成承诺继续受保护。
 

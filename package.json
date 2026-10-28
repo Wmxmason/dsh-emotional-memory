@@ -1,6 +1,6 @@
 {
   "name": "dsh-emotional-memory",
-  "version": "0.2.3",
+  "version": "0.3.0",
   "description": "Daily Beijing-time memory consolidation and fresh QQ session handoff for DeepSeek Harness",
   "repository": {
     "type": "git",
