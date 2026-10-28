@@ -1,0 +1,13 @@
+node_modules/
+.dsh/
+.dsh-qqbot/
+.env
+.env.*
+!.env.example
+*.log
+*.tgz
+coverage/
+
+# One-time local maintenance files.
+scripts/reset-current-qq-memory.ps1
+test/reset-memory.test.ps1

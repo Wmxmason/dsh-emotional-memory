@@ -1,0 +1,23 @@
+- insert:
+    - id: dsh-emotional-memory
+      name: dsh-emotional-memory
+      config:
+        enabled: true
+        qqOnly: true
+        rotateQQSession: true
+        storageDir: ''
+        dailyHour: 4
+        dailyMinute: 0
+        archiveThreshold: 0.05
+        archiveRetentionDays: 7
+        handoffTtlDays: 14
+        maxObservationChars: 2000
+        maxRecords: 400
+        maxDistillChars: 30000
+        distillMaxTokens: 3000
+        requestTimeoutMs: 180000
+        maxBatchesPerRun: 2
+        injectLimit: 6
+        injectMaxChars: 2400
+        retainTurns: 2
+        retainRecentHours: 48

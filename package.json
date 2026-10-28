@@ -1,0 +1,71 @@
+{
+  "name": "dsh-emotional-memory",
+  "version": "0.2.3",
+  "description": "Daily Beijing-time memory consolidation and fresh QQ session handoff for DeepSeek Harness",
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/Wmxmason/dsh-emotional-memory.git"
+  },
+  "homepage": "https://github.com/Wmxmason/dsh-emotional-memory#readme",
+  "bugs": {
+    "url": "https://github.com/Wmxmason/dsh-emotional-memory/issues"
+  },
+  "type": "module",
+  "main": "./lib/index.js",
+  "exports": {
+    ".": {
+      "default": "./lib/index.js"
+    },
+    "./package.json": "./package.json"
+  },
+  "files": [
+    "lib",
+    "test/*.test.js",
+    "test/*.host.test.mjs",
+    "test/helpers.js",
+    "scripts/check.mjs",
+    "scripts/host-loader.mjs",
+    "scripts/test-host.ps1",
+    "README.md",
+    "README.zh.md",
+    "cordis.patch.yml",
+    "LICENSE",
+    "package.json"
+  ],
+  "scripts": {
+    "test": "node --test test/*.test.js",
+    "check": "node scripts/check.mjs",
+    "test:host": "pwsh -NoLogo -NoProfile -File scripts/test-host.ps1",
+    "prepack": "node scripts/check.mjs"
+  },
+  "license": "MIT",
+  "keywords": [
+    "deepseek-harness",
+    "dsh",
+    "qqbot",
+    "memory",
+    "long-term-memory"
+  ],
+  "engines": { "node": ">=24.0.0" },
+  "dsh": {
+    "bundle": {
+      "patch": "./cordis.patch.yml"
+    },
+    "compatibility": {
+      "dshReleases": {
+        "0.2.1-rc.3": "compatible"
+      },
+      "note": "QQ rotation and progress diagnostics tested with Desktop SDK 0.2.1-rc.3, its real native Agent maintenance reservation, and dsh-qqbot 0.5.2 SessionManager. Peer ranges also admit SDK 0.2.1-rc.2 for installation, but that runtime is unverified. Model responses and QQ transport are synthetic; no paid API or live QQ messages are exercised. Other QQ plugin versions are refused."
+    }
+  },
+  "peerDependencies": {
+    "@deepseek-ai/cordis": "^4.0.5",
+    "@deepseek-ai/dsh-agent": "0.2.1-rc.2 || 0.2.1-rc.3",
+    "@deepseek-ai/dsh-session": "0.2.1-rc.2 || 0.2.1-rc.3",
+    "@deepseek-ai/dsh-llm": "0.2.1-rc.2 || 0.2.1-rc.3",
+    "@deepseek-ai/dsh-compaction": "0.2.1-rc.2 || 0.2.1-rc.3",
+    "@deepseek-ai/dsh-system-prompt": "0.2.1-rc.2 || 0.2.1-rc.3",
+    "@deepseek-ai/dsh-tools": "0.2.1-rc.2 || 0.2.1-rc.3",
+    "@deepseek-ai/schemastery": "^3.18.5"
+  }
+}
