@@ -13,8 +13,8 @@
         handoffTtlDays: 14
         maxObservationChars: 2000
         maxRecords: 400
-        maxDistillChars: 30000
-        distillMaxTokens: 3000
+        maxDistillChars: 18000
+        distillMaxTokens: 6000
         requestTimeoutMs: 180000
         maxBatchesPerRun: 2
         injectLimit: 6
