@@ -25,7 +25,7 @@ async function setup(t) {
   let calls = 0;
   let failModel = false;
   let rawResponse;
-  let finishKind = 'stop';
+  let finishReason = { kind: 'stop' };
   let rejectFlush;
   const ctx = {
     logger: { warn() {}, info() {} },
@@ -62,7 +62,7 @@ async function setup(t) {
       yield { type: 'text-delta', index: 0, text: rawResponse ?? JSON.stringify({ ops: source ? [{ op: 'add', content: '用户叫小林',
         kind: 'core', confidence: 1, importance: 1, emotion: 0.5, topic: '用户称呼',
         keywords: [{ text: '小林', sourceIds: [source.id] }], sourceIds: [source.id] }] : [], handoff: '明天继续画画' }) };
-      yield { type: 'finish', reason: { kind: finishKind } };
+      yield { type: 'finish', reason: finishReason };
     } },
   };
   async function mount(session, options) {
@@ -97,10 +97,13 @@ async function setup(t) {
     content: [{ type: 'text', text: '我叫小林，明天继续画画。' }] }), { surfaceOp: 'append' });
   await handlers.get('agent/pre-step')({ agent: old.agent, messages: old.agent.session.deriveMessages() }, () => {});
   const scope = bridge.scopeForSession(old.sessionId);
-  return { ...plugin, manager, old, scope, store, contexts, definitions, mounted, handlers, persisted, live,
+  return { ...plugin, bridge, manager, old, scope, store, contexts, definitions, mounted, handlers, persisted, live,
     ctx, async disposeEffects() { for (const dispose of effects.splice(0)) await dispose(); },
     calls: () => calls, failModel: (value) => { failModel = value; }, rejectFlush: (value) => { rejectFlush = value; },
-    modelResponse: (value, finish = 'stop') => { rawResponse = value; finishKind = finish; } };
+    modelResponse: (value, finish = 'stop') => {
+      rawResponse = value;
+      finishReason = typeof finish === 'string' ? { kind: finish } : finish;
+    } };
 }
 
 const hostTest = process.env.DSH_QQ_ROOT ? test : test.skip;
@@ -248,6 +251,72 @@ hostTest('status distinguishes agent-busy deferral from timeout retry without ex
   assert.equal((await status()).maintenance.nextRetryAt, null);
 });
 
+hostTest('safe model-error diagnostics retain only approved SDK failure fields and clear after a successful QQ run', async (t) => {
+  const s = await setup(t);
+  const status = async () => JSON.parse((await s.definitions.get('memory_status').execute({}, { agent: s.old.agent })).text);
+  const error = new Error('synthetic-private-provider-body');
+  error.failure = {
+    code: 'ACCOUNT_QUOTA', status: 429, message: 'private upstream detail', requestId: 'private-request-id',
+    nested: { token: 'private-token' },
+  };
+  s.failModel(error);
+  assert.equal((await s.runScope(s.scope, true)).reason, 'model-error');
+  const failed = await status();
+  assert.deepEqual(failed.maintenance.modelFailure, { finishKind: 'error', code: 'ACCOUNT_QUOTA', status: 429 });
+  assert.equal(JSON.stringify(failed).includes('private-'), false);
+  assert.equal((await s.store.load(s.scope)).inbox.length, 1);
+  assert.equal(s.manager.getSessionRecord('c2c', 'alice'), s.old);
+
+  s.failModel(false);
+  assert.equal((await s.runScope(s.scope, true)).status, 'complete');
+  assert.equal((await s.store.load(s.scope)).maintenance.modelFailure, null);
+  assert.equal((await status()).maintenance.modelFailure, null);
+});
+
+hostTest('finish diagnostics separate cancellation and tool calls, while unknown failure codes are redacted', async (t) => {
+  for (const [finish, reason, diagnostic] of [
+    [{ kind: 'aborted', failure: { code: 'INVALID_REQUEST', status: 400 } }, 'request-cancelled', { finishKind: 'aborted', code: 'INVALID_REQUEST', status: 400 }],
+    [{ kind: 'tool-calls', failure: { code: 'ACCOUNT_QUOTA', status: 429 } }, 'unexpected-tool-calls', { finishKind: 'tool-calls', code: 'ACCOUNT_QUOTA', status: 429 }],
+    [{ kind: 'error', failure: { code: 'malicious-code-private', status: 99, message: 'private' } }, 'model-error', { finishKind: 'error', code: 'UNKNOWN' }],
+  ]) {
+    const s = await setup(t);
+    s.modelResponse(JSON.stringify({ ops: [], handoff: '' }), finish);
+    assert.equal((await s.runScope(s.scope, true)).reason, reason);
+    const value = JSON.parse((await s.definitions.get('memory_status').execute({}, { agent: s.old.agent })).text);
+    assert.deepEqual(value.maintenance.modelFailure, diagnostic);
+    assert.equal(JSON.stringify(value).includes('private'), false);
+    assert.equal((await s.store.load(s.scope)).inbox.length, 1);
+    assert.equal(s.manager.getSessionRecord('c2c', 'alice'), s.old);
+  }
+});
+
+hostTest('an inactive QQ route consolidates its persisted scope without requiring a live session', async (t) => {
+  const s = await setup(t);
+  s.manager.sessions.delete(s.old.sessionKey);
+  const result = await s.runScope(s.scope, true);
+  assert.equal(result.status, 'context-pending');
+  const state = await s.store.load(s.scope);
+  assert.equal(state.inbox.length, 0);
+  assert.ok(state.checkpoint);
+});
+
+hostTest('a private routing failure is retried safely without changing the QQ route or pending input', async (t) => {
+  const s = await setup(t);
+  const original = s.manager.getSessionRecord;
+  s.manager.getSessionRecord = () => { throw new Error('synthetic-private-routing-body'); };
+  let result;
+  try { result = await s.runScope(s.scope, true); }
+  finally { s.manager.getSessionRecord = original; }
+  assert.equal(result.status, 'retry-pending');
+  assert.equal(result.reason, 'routing-error');
+  const state = await s.store.load(s.scope);
+  assert.equal(state.maintenance.phase, 'routing');
+  assert.equal(state.maintenance.modelFailure, null);
+  assert.equal(state.inbox.length, 1);
+  assert.equal(JSON.stringify(state).includes('synthetic-private-routing-body'), false);
+  assert.equal(s.manager.getSessionRecord('c2c', 'alice'), s.old);
+});
+
 hostTest('another maintenance reservation is deferred without being counted as a model failure', async (t) => {
   const s = await setup(t);
   s.old.agent.runMaintenance = () => { throw new Error('synthetic occupied maintenance reservation'); };
@@ -313,6 +382,29 @@ hostTest('a queued manual request survives restart even when the daily date is a
   try {
     assert.equal((await restarted.runScope(s.scope)).status, 'complete');
     assert.equal(s.calls(), 1);
+    assert.equal((await s.store.load(s.scope)).maintenance.force, false);
+  } finally { await s.disposeEffects(); }
+});
+
+hostTest('a routing failure after restart preserves a queued manual request until it completes', async (t) => {
+  const s = await setup(t);
+  await s.definitions.get('memory_run_daily').execute({}, { agent: s.old.agent });
+  await s.disposeEffects();
+  const original = s.manager.getSessionRecord;
+  s.manager.getSessionRecord = () => { throw new Error('synthetic routing failure'); };
+  const restarted = apply(s.ctx, { storageDir: s.store.root });
+  try {
+    assert.equal((await restarted.runScope(s.scope)).reason, 'routing-error');
+    assert.equal((await s.store.load(s.scope)).maintenance.force, true);
+  } finally {
+    s.manager.getSessionRecord = original;
+    await s.disposeEffects();
+  }
+  await s.store.update(s.scope, (state) => { state.maintenance.nextRetryAt = 0; });
+  const retried = apply(s.ctx, { storageDir: s.store.root });
+  try {
+    assert.equal((await retried.runScope(s.scope)).status, 'complete');
+    assert.equal((await s.store.load(s.scope)).inbox.length, 0);
     assert.equal((await s.store.load(s.scope)).maintenance.force, false);
   } finally { await s.disposeEffects(); }
 });

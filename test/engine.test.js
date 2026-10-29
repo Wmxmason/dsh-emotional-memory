@@ -128,6 +128,64 @@ test('failed extraction keeps pending input; a fresh engine can finish after res
   assert.equal((await store.load('qq-alice')).lastRunDate, '2026-10-28');
 });
 
+test('a multi-item model truncation shrinks the persisted batch cap and resumes without losing committed input', async (t) => {
+  const store = await fixture(t);
+  const scope = 'qq-adaptive';
+  await store.update(scope, (state) => {
+    state.channel = 'qq';
+    state.inbox = ['first', 'second', 'third', 'fourth'].map((text, index) => ({
+      id: `${index}:0`, role: 'user', text, time: START + index,
+    }));
+    state.maintenance = { batchItemLimit: 2 };
+  });
+  const engine = new MemoryEngine(store, { maxBatchesPerRun: 2 }, () => START);
+  let attempts = 0;
+  const firstRun = await engine.consolidate(scope, async (input) => {
+    attempts++;
+    if (attempts === 2) {
+      const error = new Error('synthetic truncation');
+      error.code = 'MEMORY_MODEL_TRUNCATED';
+      throw error;
+    }
+    return response(input);
+  }, { force: true });
+  assert.equal(firstRun.status, 'partial');
+  const afterTruncation = await store.load(scope);
+  assert.deepEqual(afterTruncation.inbox.map((item) => item.text), ['third', 'fourth']);
+  assert.equal(afterTruncation.records.length, 1);
+  assert.equal(afterTruncation.maintenance.batchItemLimit, 1);
+  assert.equal(afterTruncation.maintenance.reason, 'model-truncated');
+  assert.equal(afterTruncation.maintenance.phase, 'consolidating');
+
+  const restarted = new MemoryEngine(new MemoryStore(store.root), { maxBatchesPerRun: 2 }, () => START);
+  const resumed = [];
+  let result;
+  do {
+    result = await restarted.consolidate(scope, async (input) => {
+      resumed.push(...JSON.parse(input).observations.map((item) => item.text));
+      return response(input);
+    });
+  } while (result.status === 'partial');
+  assert.equal(result.status, 'ready');
+  assert.deepEqual(resumed, ['third', 'fourth']);
+  assert.equal((await store.load(scope)).inbox.length, 0);
+  await restarted.finish(scope, result.date);
+  assert.equal((await store.load(scope)).maintenance.batchItemLimit, null);
+});
+
+test('a single-item model truncation is rethrown and retains its pending input', async (t) => {
+  const store = await fixture(t);
+  const engine = new MemoryEngine(store, {}, () => START);
+  await engine.capture(session(['only pending item']));
+  const error = new Error('synthetic truncation');
+  error.code = 'MEMORY_MODEL_TRUNCATED';
+  await assert.rejects(engine.consolidate('qq-alice', async () => { throw error; }, { force: true }), error);
+  const state = await store.load('qq-alice');
+  assert.equal(state.inbox.length, 1);
+  assert.equal(state.records.length, 0);
+  assert.equal(state.maintenance?.batchItemLimit ?? null, null);
+});
+
 test('a malformed or invented-source response cannot clear input or alter existing memory', async (t) => {
   const store = await fixture(t);
   const engine = new MemoryEngine(store, {}, () => START);

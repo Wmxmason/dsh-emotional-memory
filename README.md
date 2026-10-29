@@ -17,14 +17,14 @@
 安装依赖范围也接受 SDK `0.2.1-rc.2`，但该版本未做运行验证，不在本次已验证的支持范围内。
 
 1. 在 Harness 中配置自己的模型 API、QQ 机器人和人设。
-2. 从 [Releases](https://github.com/Wmxmason/dsh-emotional-memory/releases/latest) 下载 `dsh-emotional-memory-0.3.0.tgz`。
-3. 打开 PowerShell，替换下面的安装包路径并执行：
+2. 从 [Releases](https://github.com/Wmxmason/dsh-emotional-memory/releases/latest) 下载 `dsh-emotional-memory-0.3.1.tgz`。
+3. 完整退出 Harness，打开 PowerShell，替换下面的安装包路径并执行：
 
 ```powershell
-& "$env:LOCALAPPDATA\Programs\DeepSeek Harness\resources\runtime\cli\bin\dsh.cmd" plugin --profile desktop add 'C:\path\to\dsh-emotional-memory-0.3.0.tgz'
+& "$env:LOCALAPPDATA\Programs\DeepSeek Harness\resources\runtime\cli\bin\dsh.cmd" plugin --profile desktop add 'C:\path\to\dsh-emotional-memory-0.3.1.tgz'
 ```
 
-4. 完整退出并重新打开 Harness，从 QQ 发一条消息。可让机器人“查看记忆状态”，确认插件工作。
+4. 重新打开 Harness，从 QQ 发一条消息。可让机器人“查看记忆状态”，确认插件工作。
 
 默认存储目录为 `%USERPROFILE%\.dsh\emotional-memory\`。Harness 关闭时不会执行整理，下次启动并恢复 QQ 对话后补做。
 

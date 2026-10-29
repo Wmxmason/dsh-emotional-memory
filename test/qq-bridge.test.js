@@ -91,6 +91,19 @@ test('failed persistence keeps the old agent and routing available', async (t) =
   assert.equal(s.disposed.includes(s.plan.from), false);
 });
 
+test('an inactive QQ scope has no record and its exclusive rotation reports not-active', async (t) => {
+  const s = await setup(t);
+  const inactiveScope = `${s.scope}-inactive`;
+  assert.equal(s.bridge.recordForScope(inactiveScope), undefined);
+  let callbackRecord = Symbol('not-called');
+  const result = await s.bridge.runExclusive(inactiveScope, async (record, rotate) => {
+    callbackRecord = record;
+    return rotate({ from: 'old-inactive', to: 'new-inactive', date: '2026-10-29' }, () => true);
+  });
+  assert.equal(callbackRecord, undefined);
+  assert.deepEqual(result, { status: 'not-active' });
+});
+
 test('corrupt QQ preferences are preserved and prevent the route swap', async (t) => {
   const s = await setup(t);
   await writeFile(s.prefsPath, '{broken');

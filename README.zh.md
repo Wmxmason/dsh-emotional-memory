@@ -13,19 +13,19 @@
 
 推荐安装打包产物：
 
-从 [GitHub Releases](https://github.com/Wmxmason/dsh-emotional-memory/releases/latest) 下载安装包。使用者需要先配置自己的模型 API 和 QQ 机器人；本插件不附带个人记忆、人设或凭据。
+从 [GitHub Releases](https://github.com/Wmxmason/dsh-emotional-memory/releases/latest) 下载安装包，完整退出 Harness 后执行安装命令。使用者需要先配置自己的模型 API 和 QQ 机器人；本插件不附带个人记忆、人设或凭据。
 
 ```powershell
-dsh plugin --profile desktop add 'C:\path\to\dsh-emotional-memory-0.3.0.tgz'
+dsh plugin --profile desktop add 'C:\path\to\dsh-emotional-memory-0.3.1.tgz'
 ```
 
 若 `dsh` 不在 PATH，本机 Windows Desktop 的命令位于：
 
 ```powershell
-& "$env:LOCALAPPDATA\Programs\DeepSeek Harness\resources\runtime\cli\bin\dsh.cmd" plugin --profile desktop add 'C:\path\to\dsh-emotional-memory-0.3.0.tgz'
+& "$env:LOCALAPPDATA\Programs\DeepSeek Harness\resources\runtime\cli\bin\dsh.cmd" plugin --profile desktop add 'C:\path\to\dsh-emotional-memory-0.3.1.tgz'
 ```
 
-升级后完整退出并重新打开 Harness，再从 QQ 发一条普通消息，让适配器登记对应的 QQ 对话。安装命令会把声明了 bundle patch 的包加入 `dsh.profile.bundles`，由宿主读取包内的 `cordis.patch.yml`；已有配置覆盖继续生效。卸载使用同一入口的 `plugin --profile desktop remove dsh-emotional-memory`，数据文件由用户保留。
+升级后重新打开 Harness，再从 QQ 发一条普通消息，让适配器登记对应的 QQ 对话。安装命令会把声明了 bundle patch 的包加入 `dsh.profile.bundles`，由宿主读取包内的 `cordis.patch.yml`；已有配置覆盖继续生效。卸载使用同一入口的 `plugin --profile desktop remove dsh-emotional-memory`，数据文件由用户保留。
 
 ## 使用
 
@@ -54,15 +54,22 @@ dsh plugin --profile desktop add 'C:\path\to\dsh-emotional-memory-0.3.0.tgz'
 | agent-busy | 用户回合正在运行 |
 | maintenance-busy | 原生维护通道已被另一项工作占用；外部状态也可能显示 idle |
 | batch-limit | 本次最多处理的批次已用完 |
+| routing-error | QQ 路由检查失败，原会话和待整理观察保留并重试 |
 | request-timeout | 模型请求超过超时限制 |
 | model-truncated | 模型输出达到 token 上限，整批保留 |
+| model-error | 模型请求失败；结合 `maintenance.modelFailure` 查看安全错误码 |
+| request-cancelled | 模型请求被取消 |
+| unexpected-tool-calls | 整理响应尝试调用工具，未生成所需的最终文本 |
+| model-incomplete | 其他不正常的模型结束状态 |
 | invalid-model-json / invalid-model-response | 模型响应不符合整理格式，整批保留 |
 | invalid-source | 模型引用了无法核验的用户来源，整批保留 |
 | memory-changed | 整理期间记忆被纠正或遗忘，旧提案取消并重试 |
 | storage-error / invalid-stored-state | 存储写入失败或文件格式异常 |
 | operation-failed | 其他失败；结合 phase 判断发生阶段 |
 
-失败信息只返回上述类别，不回显供应商错误正文、聊天内容或密钥。`nextRetryAt`、`startedAt`、`finishedAt` 等时间为 Unix 毫秒时间戳；退避期限和未完成的手动请求可跨宿主重启恢复，新手动请求可重新排队。
+模型失败时，`maintenance.modelFailure` 只保留结束类型 `finishKind`、白名单错误码 `code` 及可选数字 HTTP 状态 `status`；未知错误码记为 `UNKNOWN`。不保存或回显供应商错误正文、请求标识、聊天内容或密钥。新整理开始及成功后会清除旧诊断。`nextRetryAt`、`startedAt`、`finishedAt` 等时间为 Unix 毫秒时间戳；退避期限和未完成的手动请求可跨宿主重启恢复，新手动请求可重新排队。
+
+多条观察组成的批次达到模型输出上限时，会保留该批数据，并持久化减半后的批次条数供下轮重试；单条观察仍被截断时进入失败退避。全部整理完成后重置该限制。
 
 剩余观察仍在 inbox 时，搜索不到某条内容只能说明它还没有形成可检索记忆。自动轮换还需整理成功并应用到新会话，以实际 `sessionId` 变化及 `lastRotationDate` 为准；单凭等待一两分钟或会话能回答旧问题不能判定轮换成功。
 
