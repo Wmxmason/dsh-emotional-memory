@@ -6,7 +6,7 @@
 
 - 聊天时及时保存观察；确认属于 QQ 的会话后，也捕获该会话内来自 Harness 界面的用户消息。
 - 每天北京时间 04:00 整理偏好、情绪经历和未完成事项；六级记忆模式按情绪强度、真实用户再次提及和明确保留请求管理期限。
-- 整理完成后创建空白会话，注入长期记忆和交接摘要，沿用原来的人设及模型预设。
+- 整理完成后创建空白会话，注入长期记忆和交接摘要，沿用原来的人设及模型预设；跨日恢复时先完成轮换，再把首条 QQ 消息交给新会话。
 - 不同 QQ 私聊和群聊分别存储；提供保存、检索、遗忘、状态查询和手动整理工具。
 - 数据保存在使用者本机；整理调用 Harness 中已配置的模型 API，会产生相应 API 用量。
 
@@ -17,11 +17,11 @@
 安装依赖范围也接受 SDK `0.2.1-rc.2`，但该版本未做运行验证，不在本次已验证的支持范围内。
 
 1. 在 Harness 中配置自己的模型 API、QQ 机器人和人设。
-2. 从 [Releases](https://github.com/Wmxmason/dsh-emotional-memory/releases/latest) 下载 `dsh-emotional-memory-0.3.1.tgz`。
+2. 从 [Releases](https://github.com/Wmxmason/dsh-emotional-memory/releases/latest) 下载 `dsh-emotional-memory-0.3.2.tgz`。
 3. 完整退出 Harness，打开 PowerShell，替换下面的安装包路径并执行：
 
 ```powershell
-& "$env:LOCALAPPDATA\Programs\DeepSeek Harness\resources\runtime\cli\bin\dsh.cmd" plugin --profile desktop add 'C:\path\to\dsh-emotional-memory-0.3.1.tgz'
+& "$env:LOCALAPPDATA\Programs\DeepSeek Harness\resources\runtime\cli\bin\dsh.cmd" plugin --profile desktop add 'C:\path\to\dsh-emotional-memory-0.3.2.tgz'
 ```
 
 4. 重新打开 Harness，从 QQ 发一条消息。可让机器人“查看记忆状态”，确认插件工作。

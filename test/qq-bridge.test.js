@@ -130,6 +130,55 @@ test('incoming getOrCreate waits for rotation and receives the newly committed s
   assert.equal((await inbound).sessionId, s.plan.to);
 });
 
+test('an inbound preflight can acquire the routing lock and returns the replacement record', { timeout: 3000 }, async (t) => {
+  const s = await setup(t);
+  const stop = s.bridge.onBeforeMessage(s.manager.agents, async (scope) => {
+    assert.equal(scope, s.scope);
+    await s.bridge.runExclusive(scope, (_record, rotate) => rotate(s.plan, () => true));
+  });
+  t.after(stop);
+  const replyTarget = { id: 'today-first' };
+  const next = await s.manager.getOrCreate('c2c', 'alice', 'alice', replyTarget);
+  assert.equal(next.sessionId, s.plan.to);
+  assert.equal(next.replyTarget, replyTarget);
+  assert.notEqual(next, s.record);
+});
+
+test('inbound preflight listeners belong to their host and can be removed', async (t) => {
+  const s = await setup(t);
+  let calls = 0;
+  const stopOther = s.bridge.onBeforeMessage({}, () => { throw new Error('wrong host'); });
+  const stop = s.bridge.onBeforeMessage(s.manager.agents, () => { calls++; });
+  t.after(stopOther);
+  await s.manager.getOrCreate('c2c', 'alice', 'alice', {});
+  assert.equal(calls, 1);
+  stop();
+  await s.manager.getOrCreate('c2c', 'alice', 'alice', {});
+  assert.equal(calls, 1);
+});
+
+test('inbound preflight recognizes context proxies of the same Cordis agents service', async (t) => {
+  const s = await setup(t);
+  const agents = s.manager.agents;
+  const proxy = () => new Proxy(agents, { get: (target, key) => key === Symbol.for('cordis.original') ? target : target[key] });
+  let calls = 0;
+  const stop = s.bridge.onBeforeMessage(proxy(), () => { calls++; });
+  t.after(stop);
+  s.manager.agents = proxy();
+  await s.manager.getOrCreate('c2c', 'alice', 'alice', {});
+  assert.equal(calls, 1);
+});
+
+test('a failed preflight withholds the old record and leaves its routing intact', async (t) => {
+  const s = await setup(t);
+  const stop = s.bridge.onBeforeMessage(s.manager.agents, () => { throw new Error('Memory preparation pending'); });
+  t.after(stop);
+  await assert.rejects(s.manager.getOrCreate('c2c', 'alice', 'alice', {}), /Memory preparation pending/);
+  assert.equal(s.bridge.recordForScope(s.scope), s.record);
+  assert.equal(s.manager.currentSessionId(s.record.sessionKey), s.plan.from);
+  assert.equal(s.disposed.includes(s.plan.from), false);
+});
+
 test('a final history change defers rotation and keeps the previous session intact', async (t) => {
   const s = await setup(t);
   const result = await s.bridge.runExclusive(s.scope, (_record, rotate) => rotate(s.plan, () => false));

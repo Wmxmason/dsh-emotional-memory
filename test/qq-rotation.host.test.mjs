@@ -3,6 +3,7 @@ import assert from 'node:assert/strict';
 import { join } from 'node:path';
 import { pathToFileURL } from 'node:url';
 import { writeFileSync } from 'node:fs';
+import { Context, Service } from '@deepseek-ai/cordis';
 import { Session } from '@deepseek-ai/dsh-session';
 import { createUserMessage } from '@deepseek-ai/dsh-llm';
 import { apply } from '../lib/index.js';
@@ -27,6 +28,7 @@ async function setup(t) {
   let rawResponse;
   let finishReason = { kind: 'stop' };
   let rejectFlush;
+  const modelInputs = [];
   const ctx = {
     logger: { warn() {}, info() {} },
     sessions: { async flush(session) { if (rejectFlush?.(session)) throw new Error('synthetic flush failure'); persisted.set(String(session.id), session); } },
@@ -58,6 +60,7 @@ async function setup(t) {
       calls++;
       if (failModel) throw failModel instanceof Error ? failModel : new Error('synthetic model failure');
       const input = JSON.parse(options.messages[0].content[0].text);
+      modelInputs.push(input);
       const source = input.observations.find((item) => item.role === 'user');
       yield { type: 'text-delta', index: 0, text: rawResponse ?? JSON.stringify({ ops: source ? [{ op: 'add', content: '用户叫小林',
         kind: 'core', confidence: 1, importance: 1, emotion: 0.5, topic: '用户称呼',
@@ -90,16 +93,17 @@ async function setup(t) {
       getResumeRoute: () => ({ provider: 'synthetic', model: 'fake' }), getPreset() {},
     },
   });
-  const plugin = apply(ctx, { storageDir: store.root });
-  t.after(async () => { for (const dispose of effects) await dispose(); });
   const old = await manager.getOrCreate('c2c', 'alice', 'alice', { id: 'synthetic' });
   old.agent.session.append('user/message', createUserMessage({ source: { kind: 'user' },
     content: [{ type: 'text', text: '我叫小林，明天继续画画。' }] }), { surfaceOp: 'append' });
+  const plugin = apply(ctx, { storageDir: store.root });
+  t.after(async () => { for (const dispose of effects) await dispose(); });
   await handlers.get('agent/pre-step')({ agent: old.agent, messages: old.agent.session.deriveMessages() }, () => {});
   const scope = bridge.scopeForSession(old.sessionId);
   return { ...plugin, bridge, manager, old, scope, store, contexts, definitions, mounted, handlers, persisted, live,
     ctx, async disposeEffects() { for (const dispose of effects.splice(0)) await dispose(); },
     calls: () => calls, failModel: (value) => { failModel = value; }, rejectFlush: (value) => { rejectFlush = value; },
+    modelInputs,
     modelResponse: (value, finish = 'stop') => {
       rawResponse = value;
       finishReason = typeof finish === 'string' ? { kind: finish } : finish;
@@ -107,6 +111,134 @@ async function setup(t) {
 }
 
 const hostTest = process.env.DSH_QQ_ROOT ? test : test.skip;
+
+hostTest('the first inbound QQ message of a new day rotates before delivery and remains out of old-day consolidation', async (t) => {
+  const s = await setup(t);
+  const stale = await s.store.update(s.scope, (state) => {
+    state.lastRunDate = '2000-01-01';
+    state.lastRotationDate = '2000-01-01';
+  });
+  s.engine.cache.set(s.scope, stale);
+
+  const next = await s.manager.getOrCreate('c2c', 'alice', 'alice', { id: 'first-new-day' });
+  assert.notEqual(next.sessionId, s.old.sessionId);
+  assert.equal(s.calls(), 1);
+  assert.deepEqual(s.modelInputs[0].observations.map((item) => item.text), ['我叫小林，明天继续画画。']);
+  assert.equal(next.agent.session.deriveMessages().length, 0);
+
+  const firstNewDay = '09:31：我把蓝色雨伞放在图书馆储物柜。';
+  next.agent.session.append('user/message', createUserMessage({ source: { kind: 'user' },
+    content: [{ type: 'text', text: firstNewDay }] }), { surfaceOp: 'append' });
+  await s.handlers.get('agent/pre-step')({ agent: next.agent, messages: next.agent.session.deriveMessages() }, () => {});
+  assert.ok(next.agent.session.deriveMessages().some((message) => message.content.some((block) => block.text === firstNewDay)));
+  assert.ok((await s.store.load(s.scope)).inbox.some((item) => item.text === firstNewDay));
+
+  await s.tick();
+  assert.equal(s.calls(), 1);
+  assert.equal(s.manager.getSessionRecord('c2c', 'alice').sessionId, next.sessionId);
+  const later = await s.manager.getOrCreate('c2c', 'alice', 'alice', { id: 'same-day-followup' });
+  assert.equal(later.sessionId, next.sessionId);
+  const followup = '10:10：我早上9:31说了什么？';
+  later.agent.session.append('user/message', createUserMessage({ source: { kind: 'user' },
+    content: [{ type: 'text', text: followup }] }), { surfaceOp: 'append' });
+  assert.ok(later.agent.session.deriveMessages().some((message) => message.content.some((block) => block.text === firstNewDay)));
+  assert.ok(later.agent.session.deriveMessages().some((message) => message.content.some((block) => block.text === followup)));
+});
+
+hostTest('disabled QQ rotation leaves a stale rotation marker on its existing native session', async (t) => {
+  const s = await setup(t);
+  const date = new Date(Date.now() + 4 * 3_600_000).toISOString().slice(0, 10);
+  const current = await s.store.update(s.scope, (state) => {
+    state.lastRunDate = date;
+    state.lastRotationDate = '2000-01-01';
+  });
+  s.engine.cache.set(s.scope, current);
+  await s.disposeEffects();
+  apply(s.ctx, { storageDir: s.store.root, rotateQQSession: false });
+
+  const next = await s.manager.getOrCreate('c2c', 'alice', 'alice', { id: 'disabled-rotation' });
+  assert.equal(next.sessionId, s.old.sessionId);
+  assert.equal(s.calls(), 0);
+});
+
+hostTest('a failed inbound QQ preflight rejects before routing old history and recovers through the public daily run', async (t) => {
+  const s = await setup(t);
+  const stale = await s.store.update(s.scope, (state) => {
+    state.lastRunDate = '2000-01-01';
+    state.lastRotationDate = '2000-01-01';
+  });
+  s.engine.cache.set(s.scope, stale);
+  s.failModel(true);
+
+  await assert.rejects(s.manager.getOrCreate('c2c', 'alice', 'alice', { id: 'failed-inbound' }),
+    /Daily memory preparation pending; please retry later/);
+  assert.equal(s.manager.getSessionRecord('c2c', 'alice').sessionId, s.old.sessionId);
+  assert.ok((await s.store.load(s.scope)).inbox.some((item) => item.text === '我叫小林，明天继续画画。'));
+
+  s.failModel(false);
+  assert.equal((await s.runScope(s.scope, true)).status, 'complete');
+  const next = await s.manager.getOrCreate('c2c', 'alice', 'alice', { id: 'recovered-inbound' });
+  assert.notEqual(next.sessionId, s.old.sessionId);
+});
+
+hostTest('Cordis sibling agent-service proxies still run the inbound preflight', async (t) => {
+  const s = await setup(t);
+  const root = new Context();
+  s.ctx.agents[Service.tracker] = { property: 'ctx', noShadow: true };
+  root.provide('agents', s.ctx.agents);
+  const registration = root.extend();
+  const managerContext = root.extend();
+  assert.notEqual(registration.agents, managerContext.agents);
+  s.manager.agents = managerContext.agents;
+  await s.disposeEffects();
+  apply({ ...s.ctx, agents: registration.agents }, { storageDir: s.store.root });
+  const stale = await s.store.update(s.scope, (state) => {
+    state.lastRunDate = '2000-01-01';
+    state.lastRotationDate = '2000-01-01';
+  });
+  s.engine.cache.set(s.scope, stale);
+
+  const next = await s.manager.getOrCreate('c2c', 'alice', 'alice', { id: 'cordis-sibling' });
+  assert.notEqual(next.sessionId, s.old.sessionId);
+  assert.equal(s.calls(), 1);
+});
+
+hostTest('an offline checkpoint resumes and rotates on the next inbound QQ message without a second model call', async (t) => {
+  const s = await setup(t);
+  s.manager.sessions.delete(s.old.sessionKey);
+  assert.equal((await s.runScope(s.scope, true)).status, 'context-pending');
+  assert.ok((await s.store.load(s.scope)).checkpoint);
+  assert.equal(s.calls(), 1);
+
+  const next = await s.manager.getOrCreate('c2c', 'alice', 'alice', { id: 'offline-return' });
+  assert.notEqual(next.sessionId, s.old.sessionId);
+  assert.equal(s.calls(), 1);
+  assert.equal((await s.store.load(s.scope)).checkpoint, null);
+});
+
+hostTest('concurrent inbound QQ preflights share one rotation job without deadlocking', { timeout: 3000 }, async (t) => {
+  const s = await setup(t);
+  const stale = await s.store.update(s.scope, (state) => {
+    state.lastRunDate = '2000-01-01';
+    state.lastRotationDate = '2000-01-01';
+  });
+  s.engine.cache.set(s.scope, stale);
+  const stream = s.ctx.llm.stream;
+  let release;
+  let entered;
+  const gate = new Promise((resolve) => { release = resolve; });
+  const waiting = new Promise((resolve) => { entered = resolve; });
+  s.ctx.llm.stream = async function* (options) { entered(); await gate; yield* stream(options); };
+
+  const first = s.manager.getOrCreate('c2c', 'alice', 'alice', { id: 'first' });
+  await waiting;
+  const second = s.manager.getOrCreate('c2c', 'alice', 'alice', { id: 'second' });
+  release();
+  const [one, two] = await Promise.all([first, second]);
+  assert.equal(one.sessionId, two.sessionId);
+  assert.notEqual(one.sessionId, s.old.sessionId);
+  assert.equal(s.calls(), 1);
+});
 
 hostTest('real QQ 0.5.2 manager routes to a fresh native session with inherited memory and preset', async (t) => {
   const s = await setup(t);
@@ -482,7 +614,7 @@ hostTest('an unrelated model fork after an uncommitted journal still receives a 
   const fork = { ...s.old, sessionId: id, agent, handle: { agent, async dispose() {} } };
   s.manager.sessions.set(s.old.sessionKey, fork);
   s.manager.modelResolver.setSessionId(s.old.sessionKey, id);
-  await s.manager.getOrCreate('c2c', 'alice', 'alice', {});
+  await assert.rejects(s.manager.getOrCreate('c2c', 'alice', 'alice', {}), /Daily memory preparation pending; please retry later/);
   await s.handlers.get('agent/created')({ agent });
   s.rejectFlush(undefined);
   const result = await s.runScope(s.scope, true);

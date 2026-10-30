@@ -16,13 +16,13 @@
 从 [GitHub Releases](https://github.com/Wmxmason/dsh-emotional-memory/releases/latest) 下载安装包，完整退出 Harness 后执行安装命令。使用者需要先配置自己的模型 API 和 QQ 机器人；本插件不附带个人记忆、人设或凭据。
 
 ```powershell
-dsh plugin --profile desktop add 'C:\path\to\dsh-emotional-memory-0.3.1.tgz'
+dsh plugin --profile desktop add 'C:\path\to\dsh-emotional-memory-0.3.2.tgz'
 ```
 
 若 `dsh` 不在 PATH，本机 Windows Desktop 的命令位于：
 
 ```powershell
-& "$env:LOCALAPPDATA\Programs\DeepSeek Harness\resources\runtime\cli\bin\dsh.cmd" plugin --profile desktop add 'C:\path\to\dsh-emotional-memory-0.3.1.tgz'
+& "$env:LOCALAPPDATA\Programs\DeepSeek Harness\resources\runtime\cli\bin\dsh.cmd" plugin --profile desktop add 'C:\path\to\dsh-emotional-memory-0.3.2.tgz'
 ```
 
 升级后重新打开 Harness，再从 QQ 发一条普通消息，让适配器登记对应的 QQ 对话。安装命令会把声明了 bundle patch 的包加入 `dsh.profile.bundles`，由宿主读取包内的 `cordis.patch.yml`；已有配置覆盖继续生效。卸载使用同一入口的 `plugin --profile desktop remove dsh-emotional-memory`，数据文件由用户保留。
@@ -106,16 +106,16 @@ QQ 插件没有公开会话切换服务，本版适配其 0.5.2 私有接口，�
 ## 每日整理与上下文
 
 1. 用户和 assistant 的文字事件及时写入本地，长消息分块保存，不静默截掉开头。
-2. 每分钟检查已到达的北京时间业务日。宿主关闭时无法运行；下次启动或会话恢复后补做。
+2. 每分钟检查已到达的北京时间业务日。宿主关闭时无法运行；下次启动后补做。跨日后的首条 QQ 消息在投递前检查整理和轮换进度，旧会话准备完成后才交给新会话。
 3. 用户偏好、事件、重要性、情绪强度、可信度及交接由当前配置的模型提炼。无值得记忆的内容允许空操作。
 4. 在 Agent 维护锁内整理，成功批次先落盘，全部处理完成后保存轮换检查点及目标 session id。
 5. 创建空白会话，不复制旧消息；沿用当前会话 preset、工作目录及模型路由。已配置的全局人设插件（例如可选的 `dsh-whale-persona`）仍在请求组装时生效，QQ 私聊／群聊附加提示词也由 QQ 插件继续提供。自定义人设应放在人设插件或 preset 中。
-6. 等新会话保存成功、确认旧会话没有新消息后，原子保存 QQ 的 session 路由，再更换运行时映射。新消息随后进入新会话。每个北京时间业务日最多自动轮换一次，手动要求重复整理也遵守此限制。
-7. 如果 QQ 会话因空闲被回收，先使用上次记录的模型路由整理；重新连接后，下一次空闲检查再完成轮换。宿主关闭时不能执行，重新启动并恢复 QQ 对话后补做。
+6. 等新会话保存成功、确认旧会话没有新消息后，原子保存 QQ 的 session 路由，再更换运行时映射。首条新消息及后续消息进入新会话；当天的新消息保留在新会话历史中，在下一次每日整理或明确的手动整理时处理。每个北京时间业务日最多自动轮换一次，手动要求重复整理也遵守此限制。
+7. 如果 QQ 会话因空闲被回收，先使用上次记录的模型路由整理；重新连接后，在首条消息投递前完成交接和轮换。首条消息可能需要等待旧数据整理；整理失败、积压尚未处理完或维护锁被占用时，QQ 会提示处理异常、稍后重试，该条消息尚未交给模型，需要发送者重发。旧会话、已提交记忆及重试进度保留，后台仍按原规则继续维护。
 
 每个会话每次最多处理 2 个批次，并发最多 2 个会话。剩余批次下一分钟继续，期间不提前替换上下文。忙碌会话延后；模型、解析或保存失败保留进度并退避重试。积压期间优先保留未整理内容，inbox 可能增长，可通过 `memory_status` 查看；没有“超额就丢弃旧消息”的行为。
 
-记忆和交接由 `systemPrompt.context` 在每次请求时按预算提供，不反复追加进新聊天历史。轮换失败保持旧 QQ 路由；路由已切换但完成标记尚未保存时，重试只补完标记。旧原生会话文件保留供回查。损坏的单个记忆文件会报错并保留，不覆盖为空，也不会阻止其他会话维护。
+记忆和交接由 `systemPrompt.context` 在每次请求时按预算提供，不反复追加进新聊天历史。跨日首条消息在旧数据整理完成后才进入新会话，因此不会先被提炼后随旧原文退出输入。长期记忆仍是选择性提炼和按相关性召回，不保证跨日逐字回忆每句话。轮换失败保持旧 QQ 路由；路由已切换但完成标记尚未保存时，重试只补完标记。旧原生会话文件保留供回查。损坏的单个记忆文件会报错并保留，不覆盖为空，也不会阻止其他会话维护。
 
 `rotateQQSession: false` 时使用原会话上下文压缩：保留人格／开发者消息及最近两轮用户消息和回复（原文最多保留 48 小时），检查工具调用与结果配对，并用持久化检查点恢复失败操作。
 
